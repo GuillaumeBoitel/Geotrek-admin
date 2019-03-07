@@ -76,7 +76,7 @@ class ParserTests(TranslationResetMixin, TestCase):
         FileType.objects.create(type=u"Photographie")
         self.assertEqual(TouristicEvent.objects.count(), 0)
         output = io.BytesIO()
-        call_command('import', 'geotrek.tourism.parsers.TouristicEventApidaeParser', verbosity=2, stdout=output)
+        call_command('import', 'geotrek.tourism.parsers.TouristicEventApidaeParser', verbosity=1, stdout=output)
         self.assertEqual(TouristicEvent.objects.count(), 1)
         event = TouristicEvent.objects.get()
         self.assertEqual(event.eid, u"323154")
@@ -120,7 +120,8 @@ class ParserTests(TranslationResetMixin, TestCase):
         TouristicContentTypeFactory(label=u"Hautes Alpes Naturellement", in_list=2, category=category)
         TouristicContentTypeFactory(label=u"Bienvenue à la ferme", in_list=2, category=category)
         TouristicContentTypeFactory(label=u"Agriculture biologique", in_list=2, category=category)
-        call_command('import', 'geotrek.tourism.tests.test_parsers.EspritParc', filename, verbosity=0)
+        call_command('import', 'geotrek.tourism.tests.test_parsers.EspritParc', filename, verbosity=2,
+                     stdout=io.BytesIO())
         self.assertEqual(TouristicContent.objects.count(), 24)
         content = TouristicContent.objects.all()
         eid = [
