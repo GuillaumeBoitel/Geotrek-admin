@@ -624,3 +624,10 @@ PASSWORD_HASHERS = [
 
 FORMAT_LINE_CODE = "{signagecode}-{bladenumber}-{linenumber}"
 SHOW_EXTREMITIES = False
+
+REST_FRAMEWORK = {
+    'UNICODE_JSON': False
+}
+
+ENABLED_MOBILE_FILTERS = ['difficulty', 'lengths', 'cities', 'accessibilities', 'practice', 'durations', 'themes',
+                          'route']
