@@ -30,10 +30,10 @@ if 'geotrek.trekking' in settings.INSTALLED_APPS:
 
         class Meta:
             model = trekking_models.POI
-            id_field = 'id'
+            id_field = 'pk'
             geo_field = 'geometry'
             fields = (
-                'id', 'pictures', 'name', 'description', 'type', 'geometry',
+                'id', 'pk', 'pictures', 'name', 'description', 'type', 'geometry',
             )
 
     class TrekDetailSerializer(geo_serializers.GeoFeatureModelSerializer):
@@ -86,11 +86,11 @@ if 'geotrek.trekking' in settings.INSTALLED_APPS:
 
         class Meta:
             model = trekking_models.Trek
-            id_field = 'id'
+            id_field = 'pk'
             geo_field = 'geometry'
             auto_bbox = True
             fields = (
-                'id', 'name', 'accessibilities', 'description_teaser', 'cities',
+                'id', 'pk', 'name', 'accessibilities', 'description_teaser', 'cities',
                 'description', 'departure', 'arrival', 'duration', 'access', 'advised_parking', 'advice',
                 'difficulty', 'length', 'ascent', 'descent', 'route', 'is_park_centered', 'parking_location',
                 'min_elevation', 'max_elevation', 'themes', 'networks', 'practice', 'difficulty',
@@ -126,9 +126,9 @@ if 'geotrek.trekking' in settings.INSTALLED_APPS:
 
         class Meta:
             model = trekking_models.Trek
-            id_field = 'id'
+            id_field = 'pk'
             geo_field = 'geometry'
             fields = (
-                'id', 'first_picture', 'name', 'departure', 'accessibilities', 'route', 'departure_city',
+                'id', 'pk', 'first_picture', 'name', 'departure', 'accessibilities', 'route', 'departure_city',
                 'difficulty', 'practice', 'themes', 'length', 'geometry', 'cities', 'duration', 'ascent', 'descent',
             )
