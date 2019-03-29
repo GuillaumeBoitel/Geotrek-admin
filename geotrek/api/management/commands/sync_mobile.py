@@ -38,21 +38,22 @@ class Command(BaseCommand):
         parser.add_argument('--languages', '-l', dest='languages', default='', help='Languages to sync')
         parser.add_argument('--portal', '-P', dest='portal', default=None, help='Filter by portal(s)')
         parser.add_argument('--skip-tiles', '-t', action='store_true', dest='skip_tiles', default=False,
-                            help='Skip generation of zip tiles files')
+                            help='Skip inclusion of tiles in zip files')
         parser.add_argument('--url', '-u', dest='url', default='http://localhost', help='Base url')
+        parser.add_argument('--indent', '-i', default=0, type=int, help='Indent json files')
 
     def mkdirs(self, name):
         dirname = os.path.dirname(name)
         if not os.path.exists(dirname):
             os.makedirs(dirname)
 
-    def sync_view(self, lang, view, name, url='/', params={}, zipfile=None, fix2028=False, **kwargs):
+    def sync_view(self, lang, view, name, url='/', params=None, headers={}, zipfile=None, fix2028=False, **kwargs):
         if self.verbosity == 2:
             self.stdout.write(u"\x1b[36m{lang}\x1b[0m \x1b[1m{name}\x1b[0m ...".format(lang=lang, name=name), ending="")
             self.stdout.flush()
         fullname = os.path.join(self.tmp_root, name)
         self.mkdirs(fullname)
-        request = self.factory.get(url, params)
+        request = self.factory.get(url, params, **headers)
         request.LANGUAGE_CODE = lang
         request.user = AnonymousUser()
         try:
@@ -97,7 +98,10 @@ class Command(BaseCommand):
         params = params.copy()
         if self.portal:
             params['portal'] = ','.join(self.portal)
-        self.sync_view(lang, view, name, params=params, zipfile=zipfile, fix2028=True, **kwargs)
+        headers = {}
+        if self.indent:
+            headers['HTTP_ACCEPT'] = 'application/json; indent={}'.format(self.indent)
+        self.sync_view(lang, view, name, params=params, headers=headers, zipfile=zipfile, fix2028=True, **kwargs)
 
     def sync_geojson(self, lang, viewset, name, zipfile=None, params={}, type_view={}, **kwargs):
         view = viewset.as_view(type_view)
@@ -108,7 +112,11 @@ class Command(BaseCommand):
         if self.portal:
             params['portal'] = ','.join(self.portal)
 
-        self.sync_view(lang, view, name, params=params, zipfile=zipfile, fix2028=True, **kwargs)
+        headers = {}
+        if self.indent:
+            headers['HTTP_ACCEPT'] = 'application/json; indent={}'.format(self.indent)
+
+        self.sync_view(lang, view, name, params=params, headers=headers, zipfile=zipfile, fix2028=True, **kwargs)
 
     def sync_trek_pois(self, lang, trek):
         params = {'format': 'geojson'}
@@ -135,12 +143,12 @@ class Command(BaseCommand):
         self.mkdirs(dst)
         if not os.path.isfile(dst):
             os.link(src, dst)
-        if zipfile:
+        if zipfile and os.path.join(url, name) not in zipfile.namelist():
             zipfile.write(dst, os.path.join(url, name))
         if self.verbosity == 2:
             self.stdout.write(
-                u"\x1b[36m**\x1b[0m \x1b[1m{url}/{name}\x1b[0m \x1b[32mcopied\x1b[0m".format(
-                    url=url, name=name))
+                u"\x1b[36m**\x1b[0m \x1b[1m{directory}/{url}/{name}\x1b[0m \x1b[32mcopied\x1b[0m".format(
+                    directory=directory, url=url, name=name))
 
     def sync_media_file(self, field, prefix=None, directory='', zipfile=None):
         if field and field.name:
@@ -155,11 +163,18 @@ class Command(BaseCommand):
                 dst = os.path.join(self.tmp_root, directory, name)
                 self.mkdirs(dst)
                 cairosvg.svg2png(url=obj.pictogram.path, write_to=dst)
-                zipfile.write(dst, name)
+                if name not in zipfile.namelist():
+                    zipfile.write(dst, name)
+                if self.verbosity == 2:
+                    self.stdout.write(
+                        u"\x1b[36m**\x1b[0m \x1b[1m{directory}{url}/{name}\x1b[0m \x1b[32mcopied\x1b[0m".format(
+                            directory=directory, url=obj.pictogram.url, name=name))
             else:
                 self.sync_media_file(obj.pictogram, directory=directory, zipfile=zipfile)
 
     def close_zip(self, zipfile, name):
+        self.stdout.write(u"\x1b[36m**\x1b[0m \x1b[1m{name}\x1b[0m ...".format(name=name), ending="")
+
         oldzipfilename = os.path.join(self.dst_root, name)
         zipfilename = os.path.join(self.tmp_root, name)
         try:
@@ -232,10 +247,13 @@ class Command(BaseCommand):
 
     def sync_trek_by_pk_media(self, trek):
         url_trek = os.path.join('nolang')
-        zipname_trekid = os.path.join(url_trek, str(trek.pk), 'media.zip')
+        zipname_trekid = os.path.join(url_trek, "{}.zip".format(trek.pk))
         zipfullname_trekid = os.path.join(self.tmp_root, zipname_trekid)
         self.mkdirs(zipfullname_trekid)
         trekid_zipfile = ZipFile(zipfullname_trekid, 'w')
+
+        if not self.skip_tiles:
+            self.sync_trek_tiles(trek, trekid_zipfile)
 
         for poi in trek.published_pois:
             for picture, resized in poi.resized_pictures:
@@ -250,15 +268,18 @@ class Command(BaseCommand):
             self.sync_media_file(resized, prefix=trek.pk, directory=url_trek, zipfile=trekid_zipfile)
         for desk in trek.information_desks.all():
             self.sync_media_file(desk.resized_picture, prefix=trek.pk, directory=url_trek, zipfile=trekid_zipfile)
-
-        if self.verbosity == 2:
-            self.stdout.write(u"\x1b[36m**\x1b[0m \x1b[1m{name}\x1b[0m ...".format(name=zipname_trekid),
-                              ending="")
+        for lang in self.languages:
+            trek.prepare_elevation_chart(lang, self.referer)
+            url_media = '/{}{}'.format(trek.pk, settings.MEDIA_URL)
+            self.sync_file(trek.get_elevation_chart_url_png(lang), settings.MEDIA_ROOT,
+                           url_media, directory=url_trek, zipfile=trekid_zipfile)
 
         self.close_zip(trekid_zipfile, zipname_trekid)
 
     def sync_treks_media(self):
         treks = trekking_models.Trek.objects.existing().order_by('pk')
+        if self.portal:
+            treks = treks.filter(Q(portal__name__in=self.portal) | Q(portal=None))
         treks = treks.filter(
             Q(**{'published': True})
             | Q(**{'trek_parents__parent__published': True,
@@ -270,10 +291,13 @@ class Command(BaseCommand):
 
     def sync_global_media(self):
         url_media_nolang = os.path.join('nolang')
-        zipname_settings = os.path.join('nolang', 'media.zip')
+        zipname_settings = os.path.join('nolang', 'global.zip')
         zipfullname_settings = os.path.join(self.tmp_root, zipname_settings)
         self.mkdirs(zipfullname_settings)
         self.zipfile_settings = ZipFile(zipfullname_settings, 'w')
+
+        if not self.skip_tiles:
+            self.sync_global_tiles(self.zipfile_settings)
 
         self.sync_pictograms(common_models.Theme, directory=url_media_nolang, zipfile=self.zipfile_settings)
         self.sync_pictograms(trekking_models.TrekNetwork, directory=url_media_nolang, zipfile=self.zipfile_settings)
@@ -292,27 +316,19 @@ class Command(BaseCommand):
                              zipfile=self.zipfile_settings)
         self.close_zip(self.zipfile_settings, zipname_settings)
 
-    def sync_trek_tiles(self, trek):
-        """ Creates a tiles file for the specified Trek object.
+    def sync_trek_tiles(self, trek, zipfile):
+        """ Add tiles to zipfile for the specified Trek object.
         """
-        zipname = os.path.join('nolang', str(trek.pk), 'tiles.zip')
 
         if self.verbosity == 2:
-            self.stdout.write(u"\x1b[36m**\x1b[0m \x1b[1m{name}\x1b[0m ...".format(name=zipname), ending="")
+            self.stdout.write(u"\x1b[36m**\x1b[0m \x1b[1mnolang/{}/tiles/\x1b[0m ...".format(trek.pk), ending="")
             self.stdout.flush()
-
-        trek_file = os.path.join(self.tmp_root, zipname)
 
         def _radius2bbox(lng, lat, radius):
             return (lng - radius, lat - radius,
                     lng + radius, lat + radius)
 
-        self.mkdirs(trek_file)
-
-        def close_zip(zipfile):
-            return self.close_zip(zipfile, zipname)
-
-        tiles = ZipTilesBuilder(trek_file, close_zip, **self.builder_args)
+        tiles = ZipTilesBuilder(zipfile, prefix='/{}/tiles/'.format(trek.pk), **self.builder_args)
 
         geom = trek.geom
         if geom.geom_type == 'MultiLineString':
@@ -327,82 +343,34 @@ class Command(BaseCommand):
 
         tiles.run()
 
-    def sync_global_tiles(self):
-        """ Creates a tiles file on the global extent.
-        """
-        zipname = os.path.join('nolang', 'tiles.zip')
-
         if self.verbosity == 2:
-            self.stdout.write(u"\x1b[36m**\x1b[0m \x1b[1m{name}\x1b[0m ...".format(name=zipname), ending="")
+            self.stdout.write(u"\x1b[3D\x1b[32mdownloaded\x1b[0m")
+
+    def sync_global_tiles(self, zipfile):
+        """ Add tiles to zipfile on the global extent.
+        """
+        if self.verbosity == 2:
+            self.stdout.write(u"\x1b[36m**\x1b[0m \x1b[1mtiles/\x1b[0m ...", ending="")
             self.stdout.flush()
 
         global_extent = settings.LEAFLET_CONFIG['SPATIAL_EXTENT']
 
         logger.info("Global extent is %s" % unicode(global_extent))
-        global_file = os.path.join(self.tmp_root, zipname)
-
         logger.info("Build global tiles file...")
-        self.mkdirs(global_file)
 
-        def close_zip(zipfile):
-            return self.close_zip(zipfile, zipname)
-
-        tiles = ZipTilesBuilder(global_file, close_zip, **self.builder_args)
+        tiles = ZipTilesBuilder(zipfile, prefix='tiles/', **self.builder_args)
         tiles.add_coverage(bbox=global_extent,
                            zoomlevels=settings.MOBILE_TILES_GLOBAL_ZOOMS)
         tiles.run()
 
-    def sync_tiles(self):
-        if not self.skip_tiles:
-
-            if self.celery_task:
-                self.celery_task.update_state(
-                    state='PROGRESS',
-                    meta={
-                        'name': self.celery_task.name,
-                        'current': 10,
-                        'total': 100,
-                        'infos': u"{}".format(_(u"Global tiles syncing ..."))
-                    }
-                )
-
-            self.sync_global_tiles()
-
-            if self.celery_task:
-                self.celery_task.update_state(
-                    state='PROGRESS',
-                    meta={
-                        'name': self.celery_task.name,
-                        'current': 20,
-                        'total': 100,
-                        'infos': u"{}".format(_(u"Trek tiles syncing ..."))
-                    }
-                )
-
-            treks = trekking_models.Trek.objects.existing().order_by('pk')
-
-            if self.portal:
-                treks = treks.filter(Q(portal__name__in=self.portal) | Q(portal=None))
-
-            for trek in treks:
-                if trek.any_published or any([parent.any_published for parent in trek.parents]):
-                    self.sync_trek_tiles(trek)
-
-            if self.celery_task:
-                self.celery_task.update_state(
-                    state='PROGRESS',
-                    meta={
-                        'name': self.celery_task.name,
-                        'current': 30,
-                        'total': 100,
-                        'infos': u"{}".format(_(u"Tiles synced ..."))
-                    }
-                )
+        if self.verbosity == 2:
+            self.stdout.write(u"\x1b[3D\x1b[32mdownloaded\x1b[0m")
 
     def sync(self):
-        self.sync_tiles()
         step_value = int(50 / len(settings.MODELTRANSLATION_LANGUAGES))
         current_value = 30
+
+        self.sync_medias()
 
         for lang in self.languages:
             if self.celery_task:
@@ -423,7 +391,6 @@ class Command(BaseCommand):
                 self.sync_flatpage(lang)
             self.sync_trekking(lang)
             translation.deactivate()
-        self.sync_medias()
 
     def check_dst_root_is_empty(self):
         if not os.path.exists(self.dst_root):
@@ -446,6 +413,7 @@ class Command(BaseCommand):
         self.successfull = True
         self.verbosity = options['verbosity']
         self.skip_tiles = options['skip_tiles']
+        self.indent = options['indent']
         self.factory = RequestFactory()
         self.dst_root = options["path"].rstrip('/')
         self.abs_path = os.path.abspath(options["path"])
@@ -481,7 +449,15 @@ class Command(BaseCommand):
         }
 
         self.tmp_root = os.path.join(os.path.dirname(self.dst_root), 'tmp_sync_mobile')
-        os.mkdir(self.tmp_root)
+        try:
+            os.mkdir(self.tmp_root)
+        except OSError as e:
+            if e.errno != 17:
+                raise
+            raise CommandError(
+                "The {}/ directory already exists. Please check no other sync_mobile command is already running."
+                " If not, please delete this directory.".format(self.tmp_root)
+            )
         try:
             self.sync()
         except Exception:

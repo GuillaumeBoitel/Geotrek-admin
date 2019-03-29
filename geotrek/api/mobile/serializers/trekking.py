@@ -43,8 +43,9 @@ if 'geotrek.trekking' in settings.INSTALLED_APPS:
         cities = serializers.SerializerMethodField(read_only=True)
         departure_city = serializers.SerializerMethodField(read_only=True)
         arrival_city = serializers.SerializerMethodField(read_only=True)
-        information_desks = InformationDeskSerializer(many=True)
+        information_desks = serializers.SerializerMethodField()
         parking_location = serializers.SerializerMethodField(read_only=True)
+        profile = serializers.SerializerMethodField(read_only=True)
 
         def get_parking_location(self, obj):
             if not obj.parking_location:
@@ -84,13 +85,22 @@ if 'geotrek.trekking' in settings.INSTALLED_APPS:
         def get_geometry(self, obj):
             return obj.geom2d_transformed
 
+        def get_information_desks(self, obj):
+            return [
+                InformationDeskSerializer(information_desk, context={'trek_pk': obj.pk}).data
+                for information_desk in obj.information_desks.all()
+            ]
+
+        def get_profile(self, obj):
+            return os.path.join(settings.MEDIA_URL, obj.get_elevation_chart_url_png())
+
         class Meta:
             model = trekking_models.Trek
             id_field = 'pk'
             geo_field = 'geometry'
             auto_bbox = True
             fields = (
-                'id', 'pk', 'name', 'accessibilities', 'description_teaser', 'cities',
+                'id', 'pk', 'name', 'accessibilities', 'description_teaser', 'cities', 'profile',
                 'description', 'departure', 'arrival', 'duration', 'access', 'advised_parking', 'advice',
                 'difficulty', 'length', 'ascent', 'descent', 'route', 'is_park_centered', 'parking_location',
                 'min_elevation', 'max_elevation', 'themes', 'networks', 'practice', 'difficulty',
